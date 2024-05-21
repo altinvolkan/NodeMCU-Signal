@@ -1,0 +1,198 @@
+#include <ESP8266WiFi.h>  //librarylerimiz
+#include <Wire.h>
+#include <SSD1306Wire.h>
+#include <ESP8266WebServer.h>
+#include <EEPROM.h>
+
+#define SERVER_PORT 8000
+const char* apSSID = "ESP8266AP";
+const char* apPassword = "12345678";
+
+WiFiServer server(SERVER_PORT);
+ESP8266WebServer webServer(80); // Web server portu 80
+
+int i;
+float v;
+
+int pulsepin = D0;
+int Htime;
+int Ltime;
+float Ttime;
+float freq;
+
+const int buttonPin = D8; // bu buton gelecekteki geliştirmeler için
+
+long duration;
+int distance;
+
+SSD1306Wire  display(0x3c, D5, D6);
+
+unsigned long wifiConnectStartTime = 0;
+bool wifiConnected = false;
+
+void setup()
+{
+  pinMode(pulsepin, INPUT);
+  pinMode(buttonPin, INPUT_PULLUP); 
+
+  Serial.begin(115200);
+  display.init();
+  display.flipScreenVertically();
+  display.setFont(ArialMT_Plain_10); 
+  display.setTextAlignment(TEXT_ALIGN_LEFT);
+  display.drawString(0, 0, "Kayitli WiFi agi araniyor");
+  display.display();
+
+  char ssidBuffer[32];
+  char passBuffer[64];
+
+								// EEPROM'dan kaydedilen SSID ve şifreyi oku
+  EEPROM.begin(96); 			// 96 byte değer sakla ve 96. byte'dan başla
+  EEPROM.get(0, ssidBuffer);
+  EEPROM.get(32, passBuffer);
+
+  WiFi.begin(ssidBuffer, passBuffer);
+  wifiConnectStartTime = millis(); // Bağlantı deneme zamanını kaydet
+  while (WiFi.status() != WL_CONNECTED && millis() - wifiConnectStartTime < 30000) // 30 saniyeye kadar bağlanmayı dene
+  {
+    Serial.print("->");
+    delay(200);
+  }
+  
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    wifiConnected = true;
+    // WiFi bağlantısı yapıldı
+    display.clear();
+    display.drawString(0, 0, "WiFi Baglandi");
+    display.drawString(0, 16, "IP Adresi:");
+    display.drawString(0, 32, "SSID: " + String(ssidBuffer));
+    display.drawString(50, 16, WiFi.localIP().toString());
+    display.display();
+    
+    server.begin();
+    display.drawString(0, 48, "LabView'i baslat");
+    display.display();
+    
+    for (i = 0; i < 25; i++)
+    
+    display.clear();
+  }
+  else
+  {
+    // WiFi bağlantısı yapılamadı, AP moduna geç
+    WiFi.softAP(apSSID, apPassword);
+    display.clear();
+    display.drawString(0, 0, "WiFi agi bulunamadi.");
+    display.drawString(0, 16, "AP modu acildi.");
+    display.drawString(0, 32, "SSID: " + String(apSSID));
+    display.drawString(0, 48, "Sifre: " + String(apPassword));
+    display.display();
+
+    // Web sunucusunu başlat
+    webServer.on("/", HTTP_GET, []() {
+      webServer.send(200, "text/html", "<html><body><h1>WiFi Ayarlari</h1><form method='get' action='/update'><label>SSID: </label><input type='text' name='ssid'><br><label>Sifre: </label><input type='password' name='password'><br><input type='submit' value='Gonder'></form></body></html>");
+    });
+    webServer.on("/update", HTTP_GET, handleUpdate);
+    webServer.begin();
+  }
+}
+
+void loop()
+{
+  if (wifiConnected)
+  {
+    WiFiClient client = server.available();
+    if (client)
+    {
+      display.clear();
+      display.drawString(0, 0, "Labview beni cagiriyor!");
+      display.display();
+      for (i = 0; i < 2; i++)
+      
+      while (1)
+      {
+        while (client.available())
+        {
+          digitalWrite(16, HIGH);
+          delay(20);
+          digitalWrite(16, LOW);
+          delay(20);
+          uint8_t data = client.read();
+          Serial.write(data);
+          switch (data)
+          {
+          case 'a':
+            display.clear();
+            display.display();
+            client.println("");
+            break;
+          case 'b':
+            Htime = pulseIn(pulsepin, HIGH);
+            Ltime = pulseIn(pulsepin, LOW);
+            Ttime = Htime + Ltime;
+            freq = 1000000 / Ttime;
+            Serial.println(freq);
+            display.clear();
+            display.drawString(0, 0, "Frekans:");
+            display.drawString(50, 0, String(freq) + " Hz"); 
+            display.drawString(0, 25, "Voltaj:");
+            display.drawString(50, 25, String(v) + " V");
+            display.drawString(0,50, "Labview Baglantisi Kuruldu");
+            display.display();
+            client.println(freq);
+            digitalWrite(16, HIGH);
+            delay(20);
+            digitalWrite(16, LOW);
+            delay(20);
+            break;
+          case 'c':
+            i = analogRead(0);
+            v = (i * 3.3) / 1023;
+            Serial.println(v);
+            display.clear();
+            display.drawString(0, 0, "Frekans:");
+            display.drawString(50, 0, String(freq) + " Hz"); 
+            display.drawString(0, 25, "Voltaj:");
+            display.drawString(50, 25, String(v) + " V");
+            display.drawString(0,50, "Labview Baglantisi Kuruldu");
+            display.display();
+            client.println(v);
+            break;
+          
+          }
+        }
+        if (server.hasClient())
+        {
+          return;
+        }
+      }
+    }
+
+  }
+  else
+  {
+    // WiFi bağlantısı yoksa ve AP modu açıksa web sunucusunu hizmete devam ettir
+    webServer.handleClient();
+  }
+}
+
+void handleUpdate()
+{
+  String ssidUpdate = webServer.arg("ssid");
+  String passUpdate = webServer.arg("password");
+
+  char ssidBuffer[32];
+  char passBuffer[64];
+
+  ssidUpdate.toCharArray(ssidBuffer, 32);
+  passUpdate.toCharArray(passBuffer, 64);
+
+  // EEPROM'a yeni SSID ve şifreyi kaydet
+  EEPROM.put(0, ssidBuffer);
+  EEPROM.put(32, passBuffer);
+  EEPROM.commit();
+
+  // Yeniden başlat
+  ESP.restart();
+}
